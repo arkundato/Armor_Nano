@@ -1,0 +1,112 @@
+# --------@rtoto@rkundato  
+units           metal
+dimension       3
+boundary        p p p
+atom_style      atomic
+
+read_data Ti6Al4V_matrix_config1.data
+
+# -------------------- PARAMETER morse --------------------
+pair_style morse 8.0
+#pair_coeff 1 1 1.02792 3.64074 1.88265 #Ti-Ti  
+#pair_coeff 2 2 0.2703 1.1646 3.253     #Al-Al  
+#pair_coeff 3 3 0.2552 1.1919 3.234     #V-V  
+#pair_coeff 1 2 0.52800 2.4044 2.4726   #Ti-Al
+#pair_coeff 1 3 0.51183 2.7796 2.4947   #Ti-V  
+#pair_coeff 2 3 0.26301 1.1782 3.2435   #Al-V
+
+pair_style morse 8.0
+pair_coeff 1 1 0.538000	2.054000	2.082000	#Ti
+pair_coeff 2 2 0.304000	1.422000	2.616000	#Al
+pair_coeff 3 3 0.649000	1.762000	2.650000	#V
+
+
+pair_coeff 1 2 0.404416	1.738000	2.349000	#Ti-Al
+pair_coeff 1 3 0.590899	1.908000	2.366000	#Ti-V
+
+pair_coeff 2 3 0.444180	1.592000	2.633000	#Al-V
+
+
+
+
+
+
+
+thermo 1
+thermo_style custom step pe etotal fnorm temp density
+min_style cg
+minimize 1e-6 1e-8 10000 20000
+
+write_data 1-min.lmp
+
+# Neighbor settings
+neighbor        2.0 bin
+neigh_modify    delay 0 every 1 check yes
+
+# -------------------- COMPUTE --------------------
+compute peratom all pe/atom
+
+# -------------------- EQUILIBRATION (NPT) --------------------
+reset_timestep 0
+timestep 0.0005
+velocity all create 300 12345 mom yes rot no
+thermo 1000
+thermo_style custom step lx ly lz press pxx pyy pzz pe temp etotal density
+fix 1 all npt temp 300 300 0.05 iso 0 0 1
+run 60000
+unfix 1
+
+write_data npt.lmp
+
+
+
+timestep 0.0005
+# -------------------- SIMULATION UNIAXIAL TENSION --------------------
+# Simpan panjang awal untuk semua arah
+variable tmp equal "lx"
+variable L0 equal ${tmp}
+print "Initial Length L0 (x-direction): ${L0}"
+
+variable tmpy equal "ly"
+variable Ly0 equal ${tmpy}
+print "Initial Length Ly0 (y-direction): ${Ly0}"
+
+variable tmpz equal "lz"
+variable Lz0 equal ${tmpz}
+print "Initial Length Lz0 (z-direction): ${Lz0}"
+
+reset_timestep 0
+# NPT untuk menjaga tekanan nol di arah lateral (y dan z)
+fix 1 all npt temp 300 300 0.05 y 0 0 1 z 0 0 1
+
+# Deformasi uniaksial di arah x dengan strain rate
+variable srate equal 1.0e10
+variable srate1 equal "v_srate / 1.0e12"
+fix 2 all deform 1 x erate ${srate1} units box remap x
+
+# Hitung strain untuk semua arah
+variable strain_x equal "(lx - v_L0)/v_L0"
+variable strain_y equal "(ly - v_Ly0)/v_Ly0"
+variable strain_z equal "(lz - v_Lz0)/v_Lz0"
+
+# Hitung stress (dalam GPa, konversi dari bar)
+variable stress_xx equal "-pxx/10000"
+variable stress_yy equal "-pyy/10000"
+variable stress_zz equal "-pzz/10000"
+
+# Hitung Von Mises stress (GPa)
+variable stress_vm equal "sqrt(0.5*((v_stress_xx-v_stress_yy)^2 + (v_stress_yy-v_stress_zz)^2 + (v_stress_zz-v_stress_xx)^2))"
+
+# Output data untuk analisis Poisson's ratio
+# Format: Strain_x Strain_y Strain_z Stress_xx Stress_yy Stress_zz Stress_VM
+fix def1 all print 100 "${strain_x} ${strain_y} ${strain_z} ${stress_xx} ${stress_yy} ${stress_zz} ${stress_vm}" &
+    file stress_strain_data.txt screen no title "Strain_x Strain_y Strain_z Stress_xx(GPa) Stress_yy(GPa) Stress_zz(GPa) Stress_VM(GPa)"
+
+dump 1 all custom 1000 dump.lammpstrj id type x y z
+
+thermo 1000
+thermo_style custom step v_strain_x v_strain_y v_strain_z temp v_stress_xx v_stress_yy v_stress_zz ke pe press etotal
+run 20000
+
+print "Uniaxial tension simulation completed"
+
